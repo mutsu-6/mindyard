@@ -21,12 +21,22 @@ from app.schemas.raw_log import (
     RawLogResponse,
     RawLogListResponse,
     AckResponse,
+    DeepResearchInfo,
 )
 from app.services.layer1.context_analyzer import context_analyzer
 from app.services.layer1.conversation_agent import conversation_agent
 from app.services.layer1.situation_router import situation_router
-from app.workers.tasks import analyze_log_structure, process_log_for_insight
+from app.workers.tasks import analyze_log_structure, process_log_for_insight, deep_research_task
 from app.core.config import settings
+
+import re
+
+logger = logging.getLogger(__name__)
+
+# Deep Research トリガーキーワード
+_DEEP_RESEARCH_KEYWORDS = re.compile(
+    r"調査して|リサーチして|調べて|詳しく調べ|深掘りして|研究して|エビデンス|論文|データを集め"
+)
 
 router = APIRouter()
 
@@ -161,11 +171,38 @@ async def create_log(
             log.assistant_reply = conversation_reply
             await session.commit()
     except Exception as e:
-        logger = logging.getLogger(__name__)
         logger.warning("create_log: conversation_agent failed: %s", e, exc_info=True)
     if conversation_reply is None:
-        logger = logging.getLogger(__name__)
         logger.info("create_log: conversation_reply not generated (BALANCED LLM / OPENAI_API_KEY may be missing)")
+
+    # ── Deep Research トリガー判定 ──
+    # 探究心が高い（STRUCTURE intent）or 明示的なキーワードを含む場合にキック
+    deep_research_info = None
+    should_deep_research = (
+        log.intent == LogIntent.STRUCTURE
+        and _DEEP_RESEARCH_KEYWORDS.search(log_in.content)
+    ) or (
+        _DEEP_RESEARCH_KEYWORDS.search(log_in.content)
+        and len(log_in.content) >= 20
+    )
+
+    if should_deep_research:
+        try:
+            task = deep_research_task.delay(
+                query=log_in.content,
+                user_id=str(current_user.id),
+                log_id=str(log.id),
+            )
+            deep_research_info = DeepResearchInfo(
+                task_id=task.id,
+                status="queued",
+                message="詳細な調査をバックグラウンドで実行中です...",
+            )
+            logger.info(
+                f"Deep research triggered: log_id={log.id}, task_id={task.id}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to dispatch deep_research_task: {e}")
 
     # 受容的な相槌を返す
     return AckResponse.create_ack(
@@ -175,6 +212,7 @@ async def create_log(
         emotions=log.emotions,
         content=log.content,
         conversation_reply=conversation_reply,
+        deep_research=deep_research_info,
     )
 
 

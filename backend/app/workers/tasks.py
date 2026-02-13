@@ -4,6 +4,7 @@ Layer 2 の非同期処理タスク
 """
 import asyncio
 import logging
+from datetime import datetime
 from typing import Optional
 import uuid
 import re
@@ -409,13 +410,12 @@ def process_log_for_insight(self, log_id: str):
 
 
 @celery_app.task(bind=True, max_retries=3)
-def deep_research_task(self, query: str, user_id: str):
+def deep_research_task(self, query: str, user_id: str, log_id: str = ""):
     """
-    Knowledge Node からキックされる非同期調査タスク
+    Deep Research タスク: DEEPモデルで詳細調査 → DB保存 → 共有知に自動登録
 
-    ユーザーの質問に対してDEEPモデルで詳細な調査を行い、
-    結果をCeleryバックエンド経由で返す。
-    将来的にWebSocket通知やDB保存にも対応可能。
+    コストの高いDeep Researchは自動的に共有知（みんなの知恵）に分類され、
+    全体共有されて重複を避ける仕組み。
     """
     async def _research():
         await engine.dispose()
@@ -435,10 +435,17 @@ def deep_research_task(self, query: str, user_id: str):
 以下の質問について、深く掘り下げた包括的な調査レポートを作成してください。
 
 レポートのフォーマット:
-1. 概要: 質問への総合的な回答
-2. 詳細分析: 各論点の掘り下げ
-3. エビデンス: 根拠となる情報・データ
-4. 結論と推奨: まとめと次のアクション
+## 概要
+質問への総合的な回答（2-3文）
+
+## 詳細分析
+各論点の掘り下げ（箇条書き + 説明）
+
+## エビデンス
+根拠となる情報・データ・数値
+
+## 結論と推奨
+まとめと次のアクション
 
 日本語で応答してください。"""
 
@@ -450,13 +457,53 @@ def deep_research_task(self, query: str, user_id: str):
                 temperature=0.3,
             )
 
+            report = result.content
             logger.info(f"Deep research completed for user_id: {user_id}")
+
+            # ── DB保存: ログの structural_analysis に deep_research を格納 ──
+            if log_id:
+                try:
+                    async with async_session_maker() as session:
+                        log_result = await session.execute(
+                            select(RawLog).where(RawLog.id == uuid.UUID(log_id))
+                        )
+                        log = log_result.scalar_one_or_none()
+                        if log:
+                            existing = log.structural_analysis or {}
+                            existing["deep_research"] = {
+                                "report": report,
+                                "completed_at": datetime.utcnow().isoformat(),
+                            }
+                            log.structural_analysis = existing
+                            await session.commit()
+                            logger.info(f"Deep research saved to log: {log_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to save deep research to log: {e}")
+
+            # ── 共有知に自動登録（コストの高い調査は重複を避けるため共有） ──
+            try:
+                from app.services.layer3.knowledge_store import knowledge_store
+
+                await knowledge_store.store_insight({
+                    "id": f"dr-{log_id or uuid.uuid4().hex[:8]}",
+                    "title": f"調査: {query[:50]}",
+                    "summary": report[:500] if report else "",
+                    "topics": [],
+                    "tags": ["deep_research"],
+                    "content": report,
+                })
+                logger.info(
+                    f"Deep research auto-shared to knowledge store: log_id={log_id}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to store deep research in knowledge store: {e}")
 
             return {
                 "status": "success",
                 "user_id": user_id,
                 "query": query,
-                "report": result.content,
+                "report": report,
+                "log_id": log_id,
             }
 
         except Exception as e:

@@ -14,6 +14,7 @@ import type {
   RecommendationResponse,
   ConversationIntent,
   ConversationResponse,
+  TaskStatusResponse,
 } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
@@ -216,6 +217,12 @@ class ApiClient {
       message: inputText,
       mode_override: modeOverride,
     });
+    return data;
+  }
+
+  // Tasks (非同期タスクステータス)
+  async getTaskStatus(taskId: string): Promise<TaskStatusResponse> {
+    const { data } = await this.client.get<TaskStatusResponse>(`/tasks/${taskId}`);
     return data;
   }
 

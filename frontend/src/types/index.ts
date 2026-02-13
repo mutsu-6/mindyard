@@ -66,6 +66,12 @@ export interface RawLogListResponse {
   page_size: number;
 }
 
+export interface DeepResearchInfo {
+  task_id: string;
+  status: string;
+  message: string;
+}
+
 export interface AckResponse {
   message: string;
   log_id: string;
@@ -74,6 +80,20 @@ export interface AckResponse {
   transcribed_text?: string;  // 音声入力時の文字起こしテキスト
   skip_structural_analysis?: boolean;
   conversation_reply?: string; // 会話エージェントが生成した自然な返答（ラリー用）
+  deep_research?: DeepResearchInfo | null;  // Deep Research タスク情報
+}
+
+export interface TaskStatusResponse {
+  task_id: string;
+  status: string;  // PENDING, STARTED, SUCCESS, FAILURE
+  result?: {
+    status: string;
+    report?: string;
+    query?: string;
+    log_id?: string;
+    [key: string]: unknown;
+  };
+  error?: string;
 }
 
 // Insight Card (Layer 3)

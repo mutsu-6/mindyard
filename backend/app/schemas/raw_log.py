@@ -62,6 +62,13 @@ class RawLogListResponse(BaseModel):
     page_size: int
 
 
+class DeepResearchInfo(BaseModel):
+    """Deep Research タスクの情報（フロントでポーリングに使う）"""
+    task_id: str
+    status: str = "queued"
+    message: str = "詳細な調査をバックグラウンドで実行中です..."
+
+
 class AckResponse(BaseModel):
     """
     ノン・ジャッジメンタル応答
@@ -75,6 +82,7 @@ class AckResponse(BaseModel):
     transcribed_text: Optional[str] = None  # 音声入力時の文字起こしテキスト
     skip_structural_analysis: bool = False
     conversation_reply: Optional[str] = None  # 会話エージェントが生成した自然な返答（ラリー用）
+    deep_research: Optional[DeepResearchInfo] = None  # Deep Research タスク情報
 
     @classmethod
     def create_ack(
@@ -86,6 +94,7 @@ class AckResponse(BaseModel):
         content: Optional[str] = None,
         transcribed_text: Optional[str] = None,
         conversation_reply: Optional[str] = None,
+        deep_research: Optional["DeepResearchInfo"] = None,
     ) -> "AckResponse":
         """意図に応じた相槌を生成（conversation_reply がある場合はそれを優先表示用に含める）"""
         # STATE（状態共有）は即時共感のみ、構造分析はスキップ
@@ -108,6 +117,7 @@ class AckResponse(BaseModel):
                 transcribed_text=transcribed_text,
                 skip_structural_analysis=True,
                 conversation_reply=conversation_reply,
+                deep_research=deep_research,
             )
 
         ack_messages = {
@@ -141,4 +151,5 @@ class AckResponse(BaseModel):
             transcribed_text=transcribed_text,
             skip_structural_analysis=False,
             conversation_reply=conversation_reply,
+            deep_research=deep_research,
         )

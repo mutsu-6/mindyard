@@ -7,7 +7,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import Link from 'next/link';
-import { Send, Mic, MicOff, Loader2, ChevronDown, ChevronUp, Copy, Check, Lightbulb, MessageSquarePlus } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, ChevronDown, ChevronUp, Copy, Check, Lightbulb, MessageSquarePlus, Search } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useRecommendationStore, useConversationStore, rawLogToMessages } from '@/lib/store';
 import type { ChatMessage } from '@/lib/store';
@@ -51,10 +51,14 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
   const [analysisSteps, setAnalysisSteps] = useState<AnalysisStep[]>([]);
   const [isAnalysisExpanded, setIsAnalysisExpanded] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  // Deep Research state
+  const [deepResearchTaskId, setDeepResearchTaskId] = useState<string | null>(null);
+  const [isDeepResearching, setIsDeepResearching] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<NodeJS.Timeout>();
   const pollingRef = useRef<NodeJS.Timeout>();
+  const deepResearchPollingRef = useRef<NodeJS.Timeout>();
   const isPollingRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -264,6 +268,56 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
     };
   }, [pendingLogIds]);
 
+  // Deep Research タスクのポーリング
+  useEffect(() => {
+    if (!deepResearchTaskId || !isDeepResearching) return;
+
+    const pollDeepResearch = async () => {
+      try {
+        const status = await api.getTaskStatus(deepResearchTaskId);
+
+        if (status.status === 'SUCCESS' && status.result?.report) {
+          setIsDeepResearching(false);
+          setDeepResearchTaskId(null);
+
+          // 調査完了メッセージをチャットに追加
+          const reportMessage: ChatMessage = {
+            id: `dr-result-${deepResearchTaskId}`,
+            type: 'assistant',
+            content: `🔬 **調査レポート**\n\n${status.result.report}`,
+            timestamp: new Date().toISOString(),
+          };
+          addMessage(reportMessage);
+        } else if (status.status === 'FAILURE') {
+          setIsDeepResearching(false);
+          setDeepResearchTaskId(null);
+
+          const failMessage: ChatMessage = {
+            id: `dr-fail-${deepResearchTaskId}`,
+            type: 'system',
+            content: '調査中にエラーが発生しました。もう一度お試しください。',
+            timestamp: new Date().toISOString(),
+          };
+          addMessage(failMessage);
+        }
+        // PENDING / STARTED → 引き続きポーリング
+      } catch (error) {
+        console.error('Deep research polling error:', error);
+      }
+    };
+
+    // 初回5秒後、その後10秒おき
+    const initialTimeout = setTimeout(pollDeepResearch, 5000);
+    deepResearchPollingRef.current = setInterval(pollDeepResearch, 10000);
+
+    return () => {
+      clearTimeout(initialTimeout);
+      if (deepResearchPollingRef.current) {
+        clearInterval(deepResearchPollingRef.current);
+      }
+    };
+  }, [deepResearchTaskId, isDeepResearching]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 入力変更時にレコメンデーションを取得
   const fetchRecommendations = useCallback(async (text: string) => {
     if (text.length < 20) {
@@ -338,6 +392,19 @@ export function ThoughtStream({ selectedLogId, onClearSelection }: ThoughtStream
         // 構造分析のポーリングを開始
         setPendingLogIds(prev => [...prev, response.log_id]);
         initializeAnalysisSteps();
+      }
+
+      // Deep Research がトリガーされた場合
+      if (response.deep_research?.task_id) {
+        setDeepResearchTaskId(response.deep_research.task_id);
+        setIsDeepResearching(true);
+        const drMessage: ChatMessage = {
+          id: `dr-start-${response.log_id}`,
+          type: 'system',
+          content: '🔬 詳細な調査をバックグラウンドで開始しました。完了したらお知らせします。',
+          timestamp: new Date().toISOString(),
+        };
+        addMessage(drMessage);
       }
     } catch (error) {
       const errorMessage: ChatMessage = {
@@ -684,6 +751,20 @@ MINDYARD で思考を整理しました`;
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {isDeepResearching && (
+          <div className="mr-auto bg-purple-50 border border-purple-100 rounded-lg p-3 max-w-[80%]">
+            <div className="flex items-center gap-2 text-purple-600">
+              <Search className="w-4 h-4 animate-pulse" />
+              <span className="flex-1 text-left font-medium text-sm">
+                Deep Research 実行中...
+              </span>
+            </div>
+            <p className="text-xs text-purple-500 mt-1">
+              DEEPモデルによる詳細調査を実施しています。完了まで数十秒かかります。
+            </p>
           </div>
         )}
 
