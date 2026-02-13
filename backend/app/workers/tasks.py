@@ -484,14 +484,17 @@ def deep_research_task(self, query: str, user_id: str, log_id: str = ""):
             try:
                 from app.services.layer3.knowledge_store import knowledge_store
 
-                await knowledge_store.store_insight({
-                    "id": f"dr-{log_id or uuid.uuid4().hex[:8]}",
-                    "title": f"調査: {query[:50]}",
-                    "summary": report[:500] if report else "",
-                    "topics": [],
-                    "tags": ["deep_research"],
-                    "content": report,
-                })
+                dr_insight_id = f"dr-{log_id or uuid.uuid4().hex[:8]}"
+                await knowledge_store.store_insight(
+                    insight_id=dr_insight_id,
+                    insight={
+                        "title": f"調査: {query[:50]}",
+                        "summary": report[:500] if report else "",
+                        "topics": [],
+                        "tags": ["deep_research"],
+                        "content": report,
+                    },
+                )
                 logger.info(
                     f"Deep research auto-shared to knowledge store: log_id={log_id}"
                 )
